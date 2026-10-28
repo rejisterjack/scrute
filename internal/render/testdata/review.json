@@ -1,0 +1,27 @@
+{
+  "provider": "anthropic",
+  "model": "claude-sonnet-5",
+  "summary": "The change drops a nil check before the map lookup.",
+  "issues": [
+    {
+      "severity": "critical",
+      "file": "internal/pay.go",
+      "line": 42,
+      "title": "Nil map lookup",
+      "detail": "m[k] panics when m is nil."
+    },
+    {
+      "severity": "warning",
+      "file": "main.go",
+      "line": 10,
+      "title": "Ignored error",
+      "detail": "WriteTo error is discarded."
+    }
+  ],
+  "omitted": [
+    "vendor/huge.go"
+  ],
+  "binaries": [
+    "assets/logo.png"
+  ]
+}

@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Scrute — review the diff before you push</title>
+  <meta name="description" content="A local CLI that reviews your staged git diff with your own Claude or GPT key. Source stays on your machine.">
+  <link rel="canonical" href="https://scrute.rejisterjack.com/">
+  <style>
+    :root {
+      color-scheme: light;
+      --paper: #f3efe6;
+      --ink: #1b1914;
+      --muted: #5e584e;
+      --line: #d9d1c3;
+      --stamp: #8f2d2a;
+      --ok: #2d5a45;
+      --card: #fffdf8;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; }
+    body {
+      background: var(--paper);
+      color: var(--ink);
+      font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+      line-height: 1.45;
+    }
+    main {
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 4.5rem 1.4rem 5rem;
+    }
+    .mark {
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      letter-spacing: 0.18em;
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      color: var(--stamp);
+    }
+    h1 {
+      font-weight: 500;
+      font-size: clamp(2.4rem, 6vw, 3.6rem);
+      letter-spacing: -0.03em;
+      line-height: 1.05;
+      margin: 0.6rem 0 1rem;
+    }
+    .lede {
+      font-size: 1.25rem;
+      max-width: 38rem;
+      margin: 0 0 2rem;
+    }
+    .install {
+      background: var(--ink);
+      color: #f6f1e7;
+      border-radius: 10px;
+      padding: 0.95rem 1.1rem;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 0.92rem;
+      overflow-x: auto;
+    }
+    .install span { color: #e7b3a8; }
+    ol {
+      margin: 2.2rem 0 0;
+      padding: 0;
+      list-style: none;
+      display: grid;
+      gap: 0.85rem;
+    }
+    li {
+      display: grid;
+      grid-template-columns: 2rem 1fr;
+      gap: 0.7rem;
+      align-items: baseline;
+    }
+    li b {
+      font-family: ui-monospace, Menlo, Consolas, monospace;
+      font-weight: 500;
+      color: var(--stamp);
+    }
+    .panel {
+      margin-top: 2.6rem;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .panel header {
+      display: flex;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: 0.7rem 1rem;
+      border-bottom: 1px solid var(--line);
+      font-family: ui-monospace, Menlo, Consolas, monospace;
+      font-size: 0.78rem;
+      color: var(--muted);
+    }
+    pre {
+      margin: 0;
+      padding: 1rem 1.1rem 1.2rem;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 0.84rem;
+      line-height: 1.55;
+      overflow-x: auto;
+    }
+    .add { color: var(--ok); }
+    .del { color: var(--stamp); }
+    .sev { color: var(--stamp); font-weight: 650; }
+    footer {
+      margin-top: 2.4rem;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+    a { color: var(--ink); }
+    @media (max-width: 560px) {
+      main { padding-top: 2.6rem; }
+      .panel header { flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <p class="mark">Local CLI</p>
+    <h1>Review the diff before you push.</h1>
+    <p class="lede">Scrute reads your staged changes and asks Claude or GPT for a structured review, using your own API key. The source stays on your machine.</p>
+    <p class="install"><span>$</span> go install github.com/rejisterjack/scrute@latest</p>
+    <ol>
+      <li><b>01</b><span>Export <code>ANTHROPIC_API_KEY</code> or <code>OPENAI_API_KEY</code>.</span></li>
+      <li><b>02</b><span>Stage with <code>git add</code>, then run <code>scrute</code>.</span></li>
+      <li><b>03</b><span>Fix what matters. Push when the review is quiet.</span></li>
+    </ol>
+    <section class="panel" aria-label="Example review">
+      <header>
+        <span>scrute</span>
+        <span>anthropic / claude-sonnet-5</span>
+      </header>
+      <pre><span class="del">- if m == nil {</span>
+<span class="del">-     return errMissing</span>
+<span class="del">- }</span>
+  return m[key]
+
+<span class="sev">critical</span>  pay.go:42
+Nil map lookup. m[key] panics when m is nil.</pre>
+    </section>
+    <footer>
+      <p>No account, no hosted diff, no telemetry. Quality still depends on the model.</p>
+      <p><a href="https://github.com/rejisterjack/scrute">Source and install notes</a></p>
+    </footer>
+  </main>
+</body>
+</html>
