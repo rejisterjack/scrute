@@ -133,8 +133,13 @@ func ReadStaged(ctx context.Context, dir string) (string, []FileChange, error) {
 	}
 
 	var files []FileChange
-	for _, fp := range patch.FilePatches() {
-		file, err := fileChange(repo, fp)
+	patches := patch.FilePatches()
+	for i, fp := range patches {
+		var src *object.Change
+		if i < len(changes) {
+			src = changes[i]
+		}
+		file, err := fileChange(repo, fp, src)
 		if err != nil {
 			return "", nil, err
 		}
@@ -369,7 +374,10 @@ type singlePatch struct {
 func (s singlePatch) FilePatches() []fdiff.FilePatch { return []fdiff.FilePatch{s.fp} }
 func (s singlePatch) Message() string                { return "" }
 
-func fileChange(repo *git.Repository, fp fdiff.FilePatch) (FileChange, error) {
+func fileChange(repo *git.Repository, fp fdiff.FilePatch, src *object.Change) (FileChange, error) {
+	if src != nil && (entrySubmodule(src.From) || entrySubmodule(src.To)) {
+		return submoduleChange(src), nil
+	}
 	from, to := fp.Files()
 	change := FileChange{}
 	switch {
@@ -413,6 +421,11 @@ func fileChange(repo *git.Repository, fp fdiff.FilePatch) (FileChange, error) {
 			change.Text = string(toBytes)
 		}
 	}
+	// A deletion has no index blob. Numbered context comes from HEAD, which is
+	// the file that the staged delete removes.
+	if to == nil && !isBinary(fromBytes) {
+		change.Text = string(fromBytes)
+	}
 	// A NUL in the blob is the binary signal. go-git also treats an empty chunk
 	// list as binary, which would mislabel an empty text file.
 	if isBinary(fromBytes) || isBinary(toBytes) {
@@ -427,8 +440,33 @@ func fileChange(repo *git.Repository, fp fdiff.FilePatch) (FileChange, error) {
 		return FileChange{}, fmt.Errorf("encode patch %s: %w", change.Path, err)
 	}
 	change.Patch = buf.String()
-	change.Hunks = hunks(fp, len(strings.Split(strings.TrimSuffix(change.Text, "\n"), "\n")))
+	deleted := change.Status == Deleted
+	change.Hunks = hunks(fp, len(strings.Split(strings.TrimSuffix(change.Text, "\n"), "\n")), deleted)
 	return change, nil
+}
+
+func entrySubmodule(entry object.ChangeEntry) bool {
+	return entry.Name != "" && entry.TreeEntry.Mode == filemode.Submodule
+}
+
+func submoduleChange(src *object.Change) FileChange {
+	file := FileChange{Submodule: true, Binary: true}
+	switch {
+	case src.From.Name == "":
+		file.Status = Added
+		file.Path = src.To.Name
+	case src.To.Name == "":
+		file.Status = Deleted
+		file.Path = src.From.Name
+	case src.From.Name != src.To.Name:
+		file.Status = Renamed
+		file.OldPath = src.From.Name
+		file.Path = src.To.Name
+	default:
+		file.Status = Modified
+		file.Path = src.To.Name
+	}
+	return file
 }
 
 func isBinary(body []byte) bool {
@@ -442,15 +480,27 @@ func isBinary(body []byte) bool {
 	return bytes.IndexByte(body[:n], 0) >= 0
 }
 
-func hunks(fp fdiff.FilePatch, fileLines int) []Span {
+func hunks(fp fdiff.FilePatch, fileLines int, deleted bool) []Span {
+	oldLine := 1
 	newLine := 1
 	var spans []Span
 	for _, chunk := range fp.Chunks() {
 		n := countLines(chunk.Content())
 		switch chunk.Type() {
 		case fdiff.Equal:
+			oldLine += n
 			newLine += n
 		case fdiff.Delete:
+			if deleted {
+				start := oldLine
+				end := oldLine
+				if n > 0 {
+					end = oldLine + n - 1
+				}
+				spans = append(spans, Span{Start: start, End: end})
+				oldLine += n
+				continue
+			}
 			start := newLine
 			if start < 1 {
 				start = 1
@@ -460,7 +510,9 @@ func hunks(fp fdiff.FilePatch, fileLines int) []Span {
 			if n == 0 {
 				continue
 			}
-			spans = append(spans, Span{Start: newLine, End: newLine + n - 1})
+			if !deleted {
+				spans = append(spans, Span{Start: newLine, End: newLine + n - 1})
+			}
 			newLine += n
 		}
 	}

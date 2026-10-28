@@ -3,6 +3,7 @@ package gitdiff
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -221,5 +222,102 @@ func mustWrite(t *testing.T, path, body string) {
 	}
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestDeletedFileKeepsHeadContext(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	dir := t.TempDir()
+	runGit(t, dir, "init", "-b", "main")
+	runGit(t, dir, "config", "user.email", "scrute@example.com")
+	runGit(t, dir, "config", "user.name", "Scrute")
+	mustWrite(t, filepath.Join(dir, "note.txt"), "alpha\nbeta\ngamma\ndelta\n")
+	runGit(t, dir, "add", "note.txt")
+	runGit(t, dir, "commit", "-m", "base")
+	runGit(t, dir, "rm", "note.txt")
+
+	_, files, err := ReadStaged(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 {
+		t.Fatalf("files %#v", files)
+	}
+	file := files[0]
+	if file.Status != Deleted || file.Text == "" || !strings.Contains(file.Text, "gamma") {
+		t.Fatalf("deleted file lost HEAD text: %#v", file)
+	}
+	if len(file.Hunks) == 0 || file.Hunks[0].Start > 3 || file.Hunks[0].End < 3 {
+		t.Fatalf("hunks %#v", file.Hunks)
+	}
+}
+
+func TestReadStagedConflict(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	dir := t.TempDir()
+	runGit(t, dir, "init", "-b", "main")
+	runGit(t, dir, "config", "user.email", "scrute@example.com")
+	runGit(t, dir, "config", "user.name", "Scrute")
+	mustWrite(t, filepath.Join(dir, "f.txt"), "base\n")
+	runGit(t, dir, "add", "f.txt")
+	runGit(t, dir, "commit", "-m", "base")
+	runGit(t, dir, "checkout", "-b", "other")
+	mustWrite(t, filepath.Join(dir, "f.txt"), "other\n")
+	runGit(t, dir, "add", "f.txt")
+	runGit(t, dir, "commit", "-m", "other")
+	runGit(t, dir, "checkout", "main")
+	mustWrite(t, filepath.Join(dir, "f.txt"), "main\n")
+	runGit(t, dir, "add", "f.txt")
+	runGit(t, dir, "commit", "-m", "main")
+
+	cmd := exec.Command("git", "merge", "other")
+	cmd.Dir = dir
+	if err := cmd.Run(); err == nil {
+		t.Fatal("expected a merge conflict")
+	}
+	_, _, err := ReadStaged(context.Background(), dir)
+	if err == nil || !errors.Is(err, ErrConflict) {
+		t.Fatalf("err %v", err)
+	}
+}
+
+func TestSubmoduleIsSkipped(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	sub := t.TempDir()
+	runGit(t, sub, "init", "-b", "main")
+	runGit(t, sub, "config", "user.email", "scrute@example.com")
+	runGit(t, sub, "config", "user.name", "Scrute")
+	mustWrite(t, filepath.Join(sub, "lib.go"), "package lib\n")
+	runGit(t, sub, "add", "lib.go")
+	runGit(t, sub, "commit", "-m", "lib")
+	sha := strings.TrimSpace(runGit(t, sub, "rev-parse", "HEAD"))
+
+	dir := t.TempDir()
+	runGit(t, dir, "init", "-b", "main")
+	runGit(t, dir, "config", "user.email", "scrute@example.com")
+	runGit(t, dir, "config", "user.name", "Scrute")
+	mustWrite(t, filepath.Join(dir, "README"), "root\n")
+	runGit(t, dir, "add", "README")
+	runGit(t, dir, "commit", "-m", "root")
+	runGit(t, dir, "update-index", "--add", "--cacheinfo", "160000,"+sha+",libs/sub")
+
+	_, files, err := ReadStaged(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found *FileChange
+	for i := range files {
+		if files[i].Path == "libs/sub" {
+			found = &files[i]
+		}
+	}
+	if found == nil || !found.Submodule || found.Text != "" || found.Patch != "" {
+		t.Fatalf("submodule %#v files %#v", found, files)
 	}
 }

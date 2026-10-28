@@ -209,20 +209,20 @@ func runReview(ctx context.Context, stdout, stderr io.Writer, flags reviewFlags)
 		Binaries:   outcome.Binaries,
 		Submodules: outcome.Submodules,
 		Reviewed:   outcome.Reviewed,
-		Color:      flags.format == "" && useColor(stdout),
 	}
 	stdoutFormat := flags.format
 	if stdoutFormat == "" {
 		stdoutFormat = "term"
 	}
-	if err := render.Write(stdout, stdoutFormat, view); err != nil {
+	stdoutView := view
+	stdoutView.Color = termFormat(flags.format) && useColor(stdout)
+	if err := render.Write(stdout, stdoutFormat, stdoutView); err != nil {
 		return fail(exitUsage, err)
 	}
 	if flags.out != "" {
 		fileFormat := stdoutFormat
 		if flags.format == "" {
 			fileFormat = "markdown"
-			view.Color = false
 		}
 		text, err := render.Format(fileFormat, view)
 		if err != nil {
@@ -254,6 +254,15 @@ func reviewExit(out review.Outcome, failOn string) int {
 func validFormat(format string) bool {
 	switch strings.ToLower(strings.TrimSpace(format)) {
 	case "", "term", "terminal", "text", "markdown", "md", "json":
+		return true
+	default:
+		return false
+	}
+}
+
+func termFormat(format string) bool {
+	switch strings.ToLower(strings.TrimSpace(format)) {
+	case "", "term", "terminal", "text":
 		return true
 	default:
 		return false

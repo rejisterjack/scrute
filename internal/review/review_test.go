@@ -2,6 +2,7 @@ package review
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -102,6 +103,19 @@ func TestPackSplitsAndOmits(t *testing.T) {
 	}
 }
 
+func TestDeletedFileContextInPrompt(t *testing.T) {
+	body := sectionBody(gitdiff.FileChange{
+		Path:   "note.txt",
+		Status: gitdiff.Deleted,
+		Text:   "alpha\nbeta\ngamma\ndelta\n",
+		Patch:  "@@ -1,4 +0,0 @@\n-alpha\n-beta\n-gamma\n-delta\n",
+		Hunks:  []gitdiff.Span{{Start: 1, End: 4}},
+	}, 1)
+	if !strings.Contains(body, "3 | gamma") {
+		t.Fatalf("prompt dropped deleted context:\n%s", body)
+	}
+}
+
 func TestMergeDedupes(t *testing.T) {
 	merged := Merge([]Review{
 		{Summary: "First.", Issues: []Issue{{Severity: Warning, File: "a.go", Line: 2, Title: "Err", Detail: "ignored"}}},
@@ -152,6 +166,26 @@ func TestRunnerRetriesInvalidJSON(t *testing.T) {
 	}
 	if out.Input != 6 || out.Output != 8 {
 		t.Fatalf("tokens %d %d", out.Input, out.Output)
+	}
+}
+
+func TestRunnerSecondParseIsUnparsed(t *testing.T) {
+	model := &scripted{raw: []string{"not json", "still not json"}}
+	_, err := (Runner{
+		Model:        model,
+		ProviderName: "openai",
+		ModelName:    "gpt-5.4",
+		Strictness:   "balanced",
+		MaxDiffBytes: 1000,
+	}).Run(context.Background(), []gitdiff.FileChange{{
+		Path: "a.go", Status: gitdiff.Modified, Text: "package a\n", Patch: "+package a\n",
+	}})
+	var unparsed *UnparsedError
+	if err == nil || !errors.As(err, &unparsed) || len(model.calls) != 2 {
+		t.Fatalf("err %v calls %d", err, len(model.calls))
+	}
+	if strings.Contains(err.Error(), "sk-") {
+		t.Fatal("unexpected secret")
 	}
 }
 

@@ -30,7 +30,7 @@ scrute --provider openai
 scrute --format markdown --out REVIEW.md
 ```
 
-`scrute init` writes a `.scrute.yaml`. `scrute hook install` adds an opt-in pre-push hook that aborts the push when scrute exits non-zero. `scrute hook uninstall` removes that hook and leaves any other hook alone.
+`scrute init` writes a `.scrute.yaml`. `scrute hook install` adds an opt-in pre-push hook that aborts the push when scrute exits non-zero. `scrute hook uninstall` removes that hook and leaves any other hook alone. On Windows the hook is a POSIX shell script and runs under Git for Windows. It does not run in cmd.exe. The Windows zip from the release is the scrute binary the hook runs.
 
 ## Example
 
@@ -101,7 +101,7 @@ Review quality depends on the model and the prompt.
 go test -race ./...
 ```
 
-GitHub Actions runs the race tests, `golangci-lint`, and `govulncheck` on `dev` and `main`. Provider tests use a local HTTP server. Tagging `v*` on `main` builds release archives with [GoReleaser](https://goreleaser.com/).
+GitHub Actions runs the race tests, `golangci-lint`, and `govulncheck` on `dev` and `main`. Provider tests use a local HTTP server. Tagging `v*` is what publishes a release. The tagged commit must already be on `main`.
 
 ## License
 
