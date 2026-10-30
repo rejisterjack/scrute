@@ -2,7 +2,7 @@
 
 > Review your diff before your teammates do—using your own API key, on your machine.
 
-**Home:** [scrute.rejisterjack.com](https://scrute.rejisterjack.com)
+**Home:** [scrute.rejisterjack.com](https://scrute.rejisterjack.com) — the static `site/` folder served by Vercel. No Scrute backend.
 
 ## One-line idea
 

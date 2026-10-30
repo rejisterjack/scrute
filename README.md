@@ -14,7 +14,7 @@ Go:
 go install github.com/rejisterjack/scrute@latest
 ```
 
-Prebuilt binaries for Linux, macOS, and Windows (amd64 and arm64) are attached to [GitHub releases](https://github.com/rejisterjack/scrute/releases).
+Prebuilt binaries for Linux, macOS, and Windows (amd64 and arm64) are attached to [GitHub releases](https://github.com/rejisterjack/scrute/releases). The static home page at [scrute.rejisterjack.com](https://scrute.rejisterjack.com) is the `site/` folder served by Vercel; no Scrute backend exists.
 
 ## Review a change
 
