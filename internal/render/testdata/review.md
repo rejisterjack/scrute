@@ -6,7 +6,7 @@ Model: claude-sonnet-5
 
 ## Summary
 
-The change drops a nil check before the map lookup.
+The change drops a nil check before the map lookup and ignores a write error on the happy path.
 
 ## Critical
 
@@ -14,17 +14,33 @@ The change drops a nil check before the map lookup.
 
 m[k] panics when m is nil.
 
+### internal/pay.go:58 Unchecked type assert
+
+user.(map[string]any) panics when the session value is not a map.
+
 ## Warning
+
+### internal/pay.go:71 Missing context cancel
+
+The HTTP client call does not honor ctx; shutdown can hang.
 
 ### main.go:10 Ignored error
 
 WriteTo error is discarded.
 
+## Suggestion
+
+### main.go:18 Prefer fmt.Errorf wrapping
+
+return err hides the call site; wrap with %w for diagnosis.
+
 ## Omitted
 
 - vendor/huge.go
+- generated/zz_api.go
 
 ## Skipped binary files
 
 - assets/logo.png
+- assets/icon.ico
 

@@ -1,7 +1,7 @@
 {
   "provider": "anthropic",
   "model": "claude-sonnet-5",
-  "summary": "The change drops a nil check before the map lookup.",
+  "summary": "The change drops a nil check before the map lookup and ignores a write error on the happy path.",
   "issues": [
     {
       "severity": "critical",
@@ -11,17 +11,40 @@
       "detail": "m[k] panics when m is nil."
     },
     {
+      "severity": "critical",
+      "file": "internal/pay.go",
+      "line": 58,
+      "title": "Unchecked type assert",
+      "detail": "user.(map[string]any) panics when the session value is not a map."
+    },
+    {
+      "severity": "warning",
+      "file": "internal/pay.go",
+      "line": 71,
+      "title": "Missing context cancel",
+      "detail": "The HTTP client call does not honor ctx; shutdown can hang."
+    },
+    {
       "severity": "warning",
       "file": "main.go",
       "line": 10,
       "title": "Ignored error",
       "detail": "WriteTo error is discarded."
+    },
+    {
+      "severity": "suggestion",
+      "file": "main.go",
+      "line": 18,
+      "title": "Prefer fmt.Errorf wrapping",
+      "detail": "return err hides the call site; wrap with %w for diagnosis."
     }
   ],
   "omitted": [
-    "vendor/huge.go"
+    "vendor/huge.go",
+    "generated/zz_api.go"
   ],
   "binaries": [
-    "assets/logo.png"
+    "assets/logo.png",
+    "assets/icon.ico"
   ]
 }

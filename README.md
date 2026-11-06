@@ -52,7 +52,7 @@ Warning
 1 critical, 1 warning
 ```
 
-That transcript is the real terminal layout. The findings are an example of the shape, not a recorded model call.
+That transcript is the real terminal layout. The findings are an example of the shape, not a recorded model call. Golden fixtures under `internal/render/testdata/` lock the renderer only—they are not a quality benchmark for model reviews.
 
 ## Configuration
 
@@ -93,7 +93,9 @@ Default models are `claude-sonnet-5` and `gpt-5.4`. Set `model` when you want a 
 
 Large diffs are split by file and reviewed in chunks. A single file bigger than `max_diff_bytes` is omitted and the command exits `2` when that was the only reason to fail, so a pre-push hook does not treat an unread file as clean. Raise the limit or review that file yourself.
 
-Review quality depends on the model and the prompt.
+### Review quality honesty
+
+Review quality depends on the model, the prompt, and how much context fits in the request. Scrute does not grade itself, does not claim recall against a labeled bug corpus, and does not replace human review or a security scanner. Treat `critical` / `warning` / `suggestion` as model opinion with file:line anchors—useful for catching obvious mistakes before push, not as a proof of correctness. Changing `strictness` only changes the prompt; it does not calibrate a score. Provider tests hit a local HTTP stub; they do not assert that live Claude or GPT findings are good.
 
 ## Development
 
