@@ -71,5 +71,6 @@ Many AI code review tools are subscription-based and run after you push, when fi
 | Artifact | Channel |
 |----------|---------|
 | CLI | `go install`, GitHub releases (Linux, macOS, Windows) |
+| Marketing site | Vercel (`site/`) at [scrute.rejisterjack.com](https://scrute.rejisterjack.com) |
 
-No server, database, or hosted component is required.
+No Scrute server, database, or hosted review component is required. Provider keys stay on the developer machine.

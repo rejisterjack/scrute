@@ -29,3 +29,5 @@ go.work.sum
 # IDE
 .idea/
 .vscode/
+.vercel
+.env*
