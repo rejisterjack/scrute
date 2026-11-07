@@ -64,10 +64,13 @@ Many AI code review tools are subscription-based and run after you push, when fi
 - Very large files may need chunking due to context windows
 - Not a hosted PR bot, policy engine, or security scanner replacement
 
+**Won't-build (closed):** A hosted GitHub App / PR bot stays out of scope. Scrute remains a local CLI only.
+
 ## Distribution
 
 | Artifact | Channel |
 |----------|---------|
 | CLI | `go install`, GitHub releases (Linux, macOS, Windows) |
+| Marketing site | Vercel (`site/`) at [scrute.rejisterjack.com](https://scrute.rejisterjack.com) |
 
-No server, database, or hosted component is required.
+No Scrute server, database, or hosted review component is required. Provider keys stay on the developer machine.
