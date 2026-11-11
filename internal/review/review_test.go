@@ -41,6 +41,17 @@ func TestParseAndFailOn(t *testing.T) {
 	if hasSeverity(rev, Critical) {
 		t.Fatal("comment fixture must not be critical")
 	}
+
+	fenced := "```json\n{\"summary\":\"Wrapped.\",\"issues\":[]}\n```"
+	if _, err := Parse(fenced); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Parse(`{"summary":"","issues":[]}`); err == nil {
+		t.Fatal("empty summary")
+	}
+	if _, err := Parse(`{"summary":"Ok.","issues":[]}{"extra":true}`); err == nil {
+		t.Fatal("extra json")
+	}
 }
 
 func TestCorpusPromptContainsBug(t *testing.T) {
@@ -93,6 +104,14 @@ func TestPackSplitsAndOmits(t *testing.T) {
 	}
 	if len(chunks) != 2 {
 		t.Fatalf("chunks %d", len(chunks))
+	}
+	renamed := []gitdiff.FileChange{{
+		Path: "notes.txt", OldPath: ".env", Status: gitdiff.Renamed,
+		Text: "TOKEN=1\n", Patch: "rename\n",
+	}}
+	packed, _, _, _ = Pack(renamed, []string{".env"}, 0, 1<<20)
+	if len(packed) != 0 {
+		t.Fatal("renamed excluded path was packed")
 	}
 	for _, chunk := range chunks {
 		for _, section := range chunk {

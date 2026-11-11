@@ -140,4 +140,72 @@ func TestHookRunsRangeForBranchUpdates(t *testing.T) {
 	if !strings.Contains(string(out), "push aborted (exit 4)") {
 		t.Fatalf("stderr %s", out)
 	}
+
+	if err := os.WriteFile(logPath, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	second := exec.Command(hookPath, "origin", "file://example")
+	second.Dir = dir
+	second.Stdin = strings.NewReader(strings.Join([]string{
+		"refs/heads/main aaa refs/heads/main 111111",
+		"refs/heads/other bbb refs/heads/other badbase",
+		"",
+	}, "\n"))
+	out, err = second.CombinedOutput()
+	if err == nil {
+		t.Fatal("expected the second ref to abort the push")
+	}
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 4 {
+		t.Fatalf("second exit %v\n%s", err, out)
+	}
+	logged, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(logged) != "--range 111111..aaa\n--range badbase..bbb\n" {
+		t.Fatalf("second calls:\n%s", logged)
+	}
+}
+
+func TestHookQuotesAndSkipsSHA256Delete(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	dir := t.TempDir()
+	cmd := exec.Command("git", "init", "-b", "main")
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	quoted := "/tmp/scrute's bin"
+	if err := Install(dir, quoted); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(filepath.Join(dir, ".git", "hooks", "pre-push"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), `'/tmp/scrute'\''s bin'`) {
+		t.Fatalf("hook did not quote the path:\n%s", body)
+	}
+
+	logPath := filepath.Join(dir, "calls")
+	fake := filepath.Join(dir, "fake-scrute")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '" + logPath + "'\nexit 0\n"
+	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := Install(dir, fake); err != nil {
+		t.Fatal(err)
+	}
+	hookPath := filepath.Join(dir, ".git", "hooks", "pre-push")
+	run := exec.Command(hookPath, "origin", "file://example")
+	run.Dir = dir
+	run.Stdin = strings.NewReader("refs/heads/old " + strings.Repeat("0", 64) + " refs/heads/old abc\n")
+	if out, err := run.CombinedOutput(); err != nil {
+		t.Fatalf("hook: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(logPath); !os.IsNotExist(err) {
+		t.Fatalf("sha256 delete invoked scrute: %v", err)
+	}
 }

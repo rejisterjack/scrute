@@ -1,6 +1,9 @@
 package cli
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/rejisterjack/scrute/internal/hook"
 	"github.com/rejisterjack/scrute/internal/review"
 )
 
@@ -316,6 +320,259 @@ func TestOpenAIStubExitZero(t *testing.T) {
 	}
 }
 
+func TestModelAndStrictnessAreSent(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	dir := stageGoFile(t, "package main\n")
+	const key = "sk-ant-test-secret-value"
+	var body string
+	server := anthropicServer(t, key, &body, 200, `{"summary":"Clean.","issues":[]}`)
+	defer server.Close()
+	t.Setenv("ANTHROPIC_API_KEY", key)
+	t.Setenv("SCRUTE_ANTHROPIC_BASE_URL", server.URL)
+
+	var out, errBuf strings.Builder
+	code := Run([]string{"--model", "claude-test-model", "--strictness", "strict", "--format", "md", "--out", "REVIEW.md"}, &out, &errBuf)
+	if code != 0 {
+		t.Fatalf("code %d %s", code, errBuf.String())
+	}
+	if !strings.Contains(body, "claude-test-model") || !strings.Contains(body, "Strictness is strict") {
+		t.Fatalf("request:\n%s", body)
+	}
+	file, err := os.ReadFile(filepath.Join(dir, "REVIEW.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(file), "# Scrute review") {
+		t.Fatalf("markdown alias wrote:\n%s", file)
+	}
+}
+
+func TestFailOnThreshold(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	dir := stageGoFile(t, "package main\n")
+	if err := os.WriteFile(filepath.Join(dir, ".scrute.yaml"), []byte("fail_on: critical\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	const key = "sk-ant-test-secret-value"
+	server := anthropicServer(t, key, nil, 200, `{"summary":"A warning.","issues":[{"severity":"warning","file":"main.go","line":1,"title":"Note","detail":"Worth a look."}]}`)
+	defer server.Close()
+	t.Setenv("ANTHROPIC_API_KEY", key)
+	t.Setenv("SCRUTE_ANTHROPIC_BASE_URL", server.URL)
+
+	var out, errBuf strings.Builder
+	if code := Run(nil, &out, &errBuf); code != 0 {
+		t.Fatalf("critical threshold code %d %s", code, errBuf.String())
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".scrute.yaml"), []byte("fail_on: warning\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	errBuf.Reset()
+	if code := Run(nil, &out, &errBuf); code != 1 {
+		t.Fatalf("warning threshold code %d out %s err %s", code, out.String(), errBuf.String())
+	}
+}
+
+func TestProviderFailureExits3(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	stageGoFile(t, "package main\n")
+	const key = "sk-ant-test-secret-value"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = io.WriteString(w, `{"type":"error","error":{"type":"authentication_error","message":"rejected `+key+`"}}`)
+	}))
+	defer server.Close()
+	t.Setenv("ANTHROPIC_API_KEY", key)
+	t.Setenv("SCRUTE_ANTHROPIC_BASE_URL", server.URL)
+
+	var out, errBuf strings.Builder
+	code := Run(nil, &out, &errBuf)
+	if code != 3 {
+		t.Fatalf("code %d out %s err %s", code, out.String(), errBuf.String())
+	}
+	if strings.Contains(errBuf.String(), key) {
+		t.Fatalf("key leaked: %s", errBuf.String())
+	}
+}
+
+func TestOmittedFileExits2(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	dir := stageGoFile(t, strings.Repeat("package main\n", 20))
+	if err := os.WriteFile(filepath.Join(dir, ".scrute.yaml"), []byte("max_diff_bytes: 30\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out, errBuf strings.Builder
+	code := Run(nil, &out, &errBuf)
+	if code != 2 || !strings.Contains(out.String(), "Omitted") || !strings.Contains(out.String(), "main.go") {
+		t.Fatalf("code %d out %s err %s", code, out.String(), errBuf.String())
+	}
+}
+
+func TestCancelledContext(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	stageGoFile(t, "package main\n")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var out, errBuf strings.Builder
+	err := runReview(ctx, &out, &errBuf, reviewFlags{})
+	var failed *failure
+	if !errors.As(err, &failed) || failed.code != 2 {
+		t.Fatalf("err %v out %s errbuf %s", err, out.String(), errBuf.String())
+	}
+}
+
+func TestHookReviewsRealRange(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	bin := filepath.Join(t.TempDir(), "scrute")
+	build := exec.Command("go", "build", "-o", bin, ".")
+	build.Dir = moduleRoot(t)
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build: %v\n%s", err, out)
+	}
+
+	dir := initRepo(t)
+	if err := os.WriteFile(filepath.Join(dir, "README"), []byte("ROOT_SENTINEL\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, dir, "add", "README")
+	git(t, dir, "commit", "-m", "base")
+	git(t, dir, "checkout", "-b", "feature")
+	if err := os.WriteFile(filepath.Join(dir, "feature.go"), []byte("package feature\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, dir, "add", "feature.go")
+	git(t, dir, "commit", "-m", "feature")
+	head := strings.TrimSpace(gitOutput(t, dir, "rev-parse", "HEAD"))
+	parent := strings.TrimSpace(gitOutput(t, dir, "rev-parse", "HEAD~1"))
+
+	const key = "sk-ant-test-secret-value"
+	var body string
+	hits := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		body = string(raw)
+		hits++
+		writeAnthropicReview(w, `{"summary":"Range reviewed.","issues":[]}`)
+	}))
+	defer server.Close()
+	t.Setenv("ANTHROPIC_API_KEY", key)
+	t.Setenv("SCRUTE_ANTHROPIC_BASE_URL", server.URL)
+	if err := hook.Install(dir, bin); err != nil {
+		t.Fatal(err)
+	}
+	hookPath := filepath.Join(dir, ".git", "hooks", "pre-push")
+
+	runHook := func(stdin string) (string, error) {
+		t.Helper()
+		cmd := exec.Command(hookPath, "origin", "file://example")
+		cmd.Dir = dir
+		cmd.Stdin = strings.NewReader(stdin)
+		out, err := cmd.CombinedOutput()
+		return string(out), err
+	}
+
+	out, err := runHook(fmt.Sprintf("refs/heads/feature %s refs/heads/feature %s\n", head, parent))
+	if err != nil {
+		t.Fatalf("range hook: %v\n%s", err, out)
+	}
+	if hits != 1 || !strings.Contains(body, "package feature") || strings.Contains(body, "ROOT_SENTINEL") {
+		t.Fatalf("hits %d body:\n%s\nhook:\n%s", hits, body, out)
+	}
+	if !strings.Contains(out, "Range reviewed.") {
+		t.Fatalf("hook output %s", out)
+	}
+
+	zeros := strings.Repeat("0", 40)
+	out, err = runHook(fmt.Sprintf("refs/heads/feature %s refs/heads/feature %s\n", head, zeros))
+	if err != nil {
+		t.Fatalf("new branch hook: %v\n%s", err, out)
+	}
+	if hits != 2 || !strings.Contains(body, "package feature") || strings.Contains(body, "ROOT_SENTINEL") {
+		t.Fatalf("hits %d body:\n%s", hits, body)
+	}
+
+	before := hits
+	out, err = runHook("")
+	if err != nil {
+		t.Fatalf("empty push: %v\n%s", err, out)
+	}
+	if hits != before {
+		t.Fatalf("empty push called the model %d times", hits-before)
+	}
+}
+
+func stageGoFile(t *testing.T, body string) string {
+	t.Helper()
+	dir := initRepo(t)
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, dir, "add", "main.go")
+	t.Chdir(dir)
+	return dir
+}
+
+func anthropicServer(t *testing.T, key string, body *string, status int, reviewJSON string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		if body != nil {
+			*body = string(raw)
+		}
+		if r.Header.Get("x-api-key") != key {
+			t.Errorf("missing api key")
+		}
+		if status != 200 {
+			w.WriteHeader(status)
+		}
+		writeAnthropicReview(w, reviewJSON)
+	}))
+}
+
+func writeAnthropicReview(w http.ResponseWriter, reviewJSON string) {
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = io.WriteString(w, `{
+	  "id": "msg_test",
+	  "type": "message",
+	  "role": "assistant",
+	  "model": "claude-sonnet-5-5",
+	  "stop_reason": "end_turn",
+	  "content": [{"type":"text","text":`+fmt.Sprintf("%q", reviewJSON)+`}],
+	  "usage": {"input_tokens": 3, "output_tokens": 2, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
+	}`)
+}
+
+func moduleRoot(t *testing.T) string {
+	t.Helper()
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatal("go.mod not found")
+		}
+		dir = parent
+	}
+}
+
 func initRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -327,9 +584,16 @@ func initRepo(t *testing.T) string {
 
 func git(t *testing.T, dir string, args ...string) {
 	t.Helper()
+	_ = gitOutput(t, dir, args...)
+}
+
+func gitOutput(t *testing.T, dir string, args ...string) string {
+	t.Helper()
 	cmd := exec.Command("git", append([]string{}, args...)...)
 	cmd.Dir = dir
-	if out, err := cmd.CombinedOutput(); err != nil {
+	out, err := cmd.CombinedOutput()
+	if err != nil {
 		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
 	}
+	return string(out)
 }

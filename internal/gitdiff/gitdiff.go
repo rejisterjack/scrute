@@ -269,7 +269,10 @@ func newRefBase(repo *git.Repository, head string) (*object.Tree, error) {
 }
 
 func open(dir string) (*git.Repository, error) {
-	repo, err := git.PlainOpenWithOptions(dir, &git.PlainOpenOptions{DetectDotGit: true})
+	repo, err := git.PlainOpenWithOptions(dir, &git.PlainOpenOptions{
+		DetectDotGit:          true,
+		EnableDotGitCommonDir: true,
+	})
 	if err != nil {
 		return nil, ErrNotRepository
 	}

@@ -84,6 +84,22 @@ func TestTemplateRoundTrip(t *testing.T) {
 	}
 }
 
+func TestRejectsBadLimits(t *testing.T) {
+	dir := t.TempDir()
+	for _, body := range []string{
+		"context_lines: -1\n",
+		"max_diff_bytes: 0\n",
+		"fail_on: never\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, FileName), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(dir); err == nil {
+			t.Fatalf("expected error for %q", body)
+		}
+	}
+}
+
 func TestRejectsUnknownProvider(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, FileName), []byte("provider: local\n"), 0o644); err != nil {

@@ -375,6 +375,67 @@ func TestOversizedTextAndBinary(t *testing.T) {
 	}
 }
 
+func TestLinkedWorktree(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	dir := t.TempDir()
+	runGit(t, dir, "init", "-b", "main")
+	runGit(t, dir, "config", "user.email", "scrute@example.com")
+	runGit(t, dir, "config", "user.name", "Scrute")
+	mustWrite(t, filepath.Join(dir, "note.txt"), "alpha\n")
+	runGit(t, dir, "add", "note.txt")
+	runGit(t, dir, "commit", "-m", "base")
+
+	linked := filepath.Join(t.TempDir(), "linked")
+	runGit(t, dir, "worktree", "add", "--detach", linked, "HEAD")
+	info, err := os.Stat(filepath.Join(linked, ".git"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.IsDir() {
+		t.Fatal("linked work tree .git should be a file")
+	}
+	gitDir, err := GitDir(linked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(gitDir, "HEAD")); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(linked, "note.txt"), "alpha\nbeta\n")
+	runGit(t, linked, "add", "note.txt")
+	_, files, err := ReadStaged(context.Background(), linked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || files[0].Path != "note.txt" || !strings.Contains(files[0].Patch, "beta") {
+		t.Fatalf("files %#v", files)
+	}
+}
+
+func TestRenameOfExcludedPath(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	dir := t.TempDir()
+	runGit(t, dir, "init", "-b", "main")
+	runGit(t, dir, "config", "user.email", "scrute@example.com")
+	runGit(t, dir, "config", "user.name", "Scrute")
+	mustWrite(t, filepath.Join(dir, ".env"), "TOKEN=1\n")
+	runGit(t, dir, "add", "-f", ".env")
+	runGit(t, dir, "commit", "-m", "secret")
+	runGit(t, dir, "mv", "-f", ".env", "notes.txt")
+
+	_, files, err := ReadStaged(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || files[0].Status != Renamed || files[0].OldPath != ".env" || files[0].Path != "notes.txt" {
+		t.Fatalf("files %#v", files)
+	}
+}
+
 func TestSubmoduleIsSkipped(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git is not installed")
