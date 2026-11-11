@@ -44,6 +44,11 @@ type Span struct {
 	End   int
 }
 
+// maxBlobBytes is the largest blob a review will load. A larger text file is
+// omitted. A larger binary is skipped after an 8 KiB sniff, so a staged asset
+// does not have to sit in memory. Tests lower this.
+var maxBlobBytes int64 = 32 << 20
+
 // FileChange is one staged path.
 type FileChange struct {
 	Path      string
@@ -51,6 +56,7 @@ type FileChange struct {
 	Status    string
 	Binary    bool
 	Submodule bool
+	Oversized bool
 	Patch     string
 	Text      string
 	Hunks     []Span
@@ -78,7 +84,7 @@ func GitDir(root string) (string, error) {
 	gitPath := filepath.Join(root, ".git")
 	info, err := os.Stat(gitPath)
 	if err != nil {
-		return "", fmt.Errorf("not a git repository: %w", ErrNotRepository)
+		return "", ErrNotRepository
 	}
 	if info.IsDir() {
 		return gitPath, nil
@@ -104,16 +110,10 @@ func ReadStaged(ctx context.Context, dir string) (string, []FileChange, error) {
 	if ctx == nil {
 		return "", nil, errors.New("nil context")
 	}
-	repo, err := open(dir)
+	repo, root, err := openWorktree(dir)
 	if err != nil {
 		return "", nil, err
 	}
-	wt, err := repo.Worktree()
-	if err != nil {
-		return "", nil, ErrBare
-	}
-	root := wt.Filesystem.Root()
-
 	headTree, err := headTree(repo)
 	if err != nil {
 		return "", nil, err
@@ -122,16 +122,69 @@ func ReadStaged(ctx context.Context, dir string) (string, []FileChange, error) {
 	if err != nil {
 		return "", nil, err
 	}
+	return diffTrees(ctx, repo, root, headTree, indexTree)
+}
 
-	changes, err := object.DiffTreeWithOptions(ctx, headTree, indexTree, object.DefaultDiffTreeOptions)
+// ReadRange returns the tree diff of base..head. A base of empty or all zeros
+// is a new ref: the diff starts at the merge-base with main or master when
+// that is a real ancestor, and at an empty tree otherwise.
+func ReadRange(ctx context.Context, dir, base, head string) (string, []FileChange, error) {
+	if ctx == nil {
+		return "", nil, errors.New("nil context")
+	}
+	base = strings.TrimSpace(base)
+	head = strings.TrimSpace(head)
+	if isZeroRev(head) {
+		return "", nil, errors.New("range head is empty")
+	}
+	repo, root, err := openWorktree(dir)
 	if err != nil {
-		return "", nil, fmt.Errorf("diff staged changes: %w", err)
+		return "", nil, err
+	}
+	headTree, err := treeAt(repo, head)
+	if err != nil {
+		return "", nil, err
+	}
+	var baseTree *object.Tree
+	if !isZeroRev(base) {
+		baseTree, err = treeAt(repo, base)
+		if err != nil {
+			return "", nil, err
+		}
+	} else {
+		baseTree, err = newRefBase(repo, head)
+		if err != nil {
+			return "", nil, err
+		}
+	}
+	return diffTrees(ctx, repo, root, baseTree, headTree)
+}
+
+func openWorktree(dir string) (*git.Repository, string, error) {
+	repo, err := open(dir)
+	if err != nil {
+		return nil, "", err
+	}
+	wt, err := repo.Worktree()
+	if err != nil {
+		return nil, "", ErrBare
+	}
+	root := wt.Filesystem.Root()
+	if root == "" {
+		return nil, "", ErrNotRepository
+	}
+	return repo, root, nil
+}
+
+func diffTrees(ctx context.Context, repo *git.Repository, root string, from, to *object.Tree) (string, []FileChange, error) {
+	changes, err := object.DiffTreeWithOptions(ctx, from, to, object.DefaultDiffTreeOptions)
+	if err != nil {
+		return "", nil, fmt.Errorf("diff changes: %w", err)
 	}
 	patch, err := changes.PatchContext(ctx)
 	if err != nil {
-		return "", nil, fmt.Errorf("build staged patch: %w", err)
+		return "", nil, fmt.Errorf("build patch: %w", err)
 	}
-
 	var files []FileChange
 	patches := patch.FilePatches()
 	for i, fp := range patches {
@@ -151,10 +204,74 @@ func ReadStaged(ctx context.Context, dir string) (string, []FileChange, error) {
 	return root, files, nil
 }
 
+func isZeroRev(rev string) bool {
+	if rev == "" {
+		return true
+	}
+	for _, c := range rev {
+		if c != '0' {
+			return false
+		}
+	}
+	return true
+}
+
+func treeAt(repo *git.Repository, rev string) (*object.Tree, error) {
+	hash, err := repo.ResolveRevision(plumbing.Revision(rev))
+	if err != nil {
+		return nil, fmt.Errorf("resolve %s: %w", rev, err)
+	}
+	commit, err := repo.CommitObject(*hash)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", rev, err)
+	}
+	tree, err := commit.Tree()
+	if err != nil {
+		return nil, fmt.Errorf("read %s tree: %w", rev, err)
+	}
+	return tree, nil
+}
+
+func newRefBase(repo *git.Repository, head string) (*object.Tree, error) {
+	hash, err := repo.ResolveRevision(plumbing.Revision(head))
+	if err != nil {
+		return nil, fmt.Errorf("resolve %s: %w", head, err)
+	}
+	headCommit, err := repo.CommitObject(*hash)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", head, err)
+	}
+	for _, name := range []plumbing.ReferenceName{
+		"refs/heads/main",
+		"refs/heads/master",
+		"refs/remotes/origin/main",
+		"refs/remotes/origin/master",
+	} {
+		ref, err := repo.Reference(name, true)
+		if err != nil || ref.Hash() == headCommit.Hash {
+			continue
+		}
+		other, err := repo.CommitObject(ref.Hash())
+		if err != nil {
+			continue
+		}
+		bases, err := headCommit.MergeBase(other)
+		if err != nil || len(bases) == 0 || bases[0].Hash == headCommit.Hash {
+			continue
+		}
+		tree, err := bases[0].Tree()
+		if err != nil {
+			return nil, fmt.Errorf("read merge base of %s: %w", head, err)
+		}
+		return tree, nil
+	}
+	return nil, nil
+}
+
 func open(dir string) (*git.Repository, error) {
 	repo, err := git.PlainOpenWithOptions(dir, &git.PlainOpenOptions{DetectDotGit: true})
 	if err != nil {
-		return nil, fmt.Errorf("not a git repository: %w", ErrNotRepository)
+		return nil, ErrNotRepository
 	}
 	return repo, nil
 }
@@ -192,38 +309,29 @@ func indexTree(repo *git.Repository) (*object.Tree, error) {
 	}
 
 	mem := memory.NewStorage()
+	// Index hashes already name blobs in the repository. The tree is built in
+	// memory and blob reads fall through to the repo, so a review does not
+	// copy every staged file into a second object store.
+	store := blobSource{Storage: mem, repo: repo.Storer}
 	root := &inode{dir: map[string]*inode{}}
 	for _, entry := range idx.Entries {
 		mode := canonMode(entry.Mode)
 		hash := entry.Hash
-		if mode == filemode.Submodule {
-			if err := insert(root, entry.Name, mode, hash); err != nil {
+		if mode != filemode.Submodule && hash == plumbing.ZeroHash {
+			hash, err = storeBlob(mem, nil)
+			if err != nil {
 				return nil, err
 			}
-			continue
 		}
-		var blob []byte
-		if hash == plumbing.ZeroHash {
-			blob = nil
-		} else {
-			blob, err = readBlob(repo.Storer, hash)
-			if err != nil {
-				return nil, fmt.Errorf("read staged blob %s: %w", entry.Name, err)
-			}
-		}
-		stored, err := storeBlob(mem, blob)
-		if err != nil {
-			return nil, err
-		}
-		if err := insert(root, entry.Name, mode, stored); err != nil {
+		if err := insert(root, entry.Name, mode, hash); err != nil {
 			return nil, err
 		}
 	}
-	hash, err := writeTree(mem, root)
+	hash, err := writeTree(store, root)
 	if err != nil {
 		return nil, err
 	}
-	tree, err := object.GetTree(mem, hash)
+	tree, err := object.GetTree(store, hash)
 	if err != nil {
 		return nil, fmt.Errorf("load index tree: %w", err)
 	}
@@ -333,17 +441,69 @@ func canonMode(mode filemode.FileMode) filemode.FileMode {
 	}
 }
 
-func readBlob(src storer.EncodedObjectStorer, hash plumbing.Hash) ([]byte, error) {
+type loadedBlob struct {
+	body      []byte
+	binary    bool
+	oversized bool
+}
+
+func loadBlob(src storer.EncodedObjectStorer, hash plumbing.Hash, path string) (loadedBlob, error) {
+	if hash == plumbing.ZeroHash {
+		return loadedBlob{}, nil
+	}
 	obj, err := src.EncodedObject(plumbing.BlobObject, hash)
 	if err != nil {
-		return nil, err
+		return loadedBlob{}, fmt.Errorf("read %s: %w", path, err)
 	}
 	reader, err := obj.Reader()
 	if err != nil {
-		return nil, err
+		return loadedBlob{}, fmt.Errorf("read %s: %w", path, err)
 	}
 	defer func() { _ = reader.Close() }()
-	return io.ReadAll(reader)
+	if obj.Size() > maxBlobBytes {
+		prefix, err := io.ReadAll(io.LimitReader(reader, 8000))
+		if err != nil {
+			return loadedBlob{}, fmt.Errorf("read %s: %w", path, err)
+		}
+		if isBinary(prefix) {
+			return loadedBlob{binary: true}, nil
+		}
+		return loadedBlob{oversized: true}, nil
+	}
+	body, err := io.ReadAll(reader)
+	if err != nil {
+		return loadedBlob{}, fmt.Errorf("read %s: %w", path, err)
+	}
+	return loadedBlob{body: body, binary: isBinary(body)}, nil
+}
+
+// blobSource keeps trees in memory and serves blobs from the repository.
+type blobSource struct {
+	*memory.Storage
+	repo storer.EncodedObjectStorer
+}
+
+func (b blobSource) EncodedObject(t plumbing.ObjectType, h plumbing.Hash) (plumbing.EncodedObject, error) {
+	if t == plumbing.BlobObject || t == plumbing.AnyObject {
+		if obj, err := b.repo.EncodedObject(t, h); err == nil {
+			return obj, nil
+		}
+	}
+	return b.Storage.EncodedObject(t, h)
+}
+
+func (b blobSource) HasEncodedObject(h plumbing.Hash) error {
+	if err := b.repo.HasEncodedObject(h); err == nil {
+		return nil
+	}
+	return b.Storage.HasEncodedObject(h)
+}
+
+func (b blobSource) EncodedObjectSize(h plumbing.Hash) (int64, error) {
+	if n, err := b.repo.EncodedObjectSize(h); err == nil {
+		return n, nil
+	}
+	return b.Storage.EncodedObjectSize(h)
 }
 
 func storeBlob(mem storer.EncodedObjectStorer, body []byte) (plumbing.Hash, error) {
@@ -404,34 +564,35 @@ func fileChange(repo *git.Repository, fp fdiff.FilePatch, src *object.Change) (F
 		return change, nil
 	}
 
-	var fromBytes, toBytes []byte
+	var fromBlob, toBlob loadedBlob
 	var err error
 	if from != nil {
-		fromBytes, err = readBlob(repo.Storer, from.Hash())
+		fromBlob, err = loadBlob(repo.Storer, from.Hash(), from.Path())
 		if err != nil {
-			return FileChange{}, fmt.Errorf("read %s: %w", from.Path(), err)
+			return FileChange{}, err
 		}
 	}
 	if to != nil {
-		toBytes, err = readBlob(repo.Storer, to.Hash())
+		toBlob, err = loadBlob(repo.Storer, to.Hash(), to.Path())
 		if err != nil {
-			return FileChange{}, fmt.Errorf("read %s: %w", to.Path(), err)
-		}
-		if !isBinary(toBytes) {
-			change.Text = string(toBytes)
+			return FileChange{}, err
 		}
 	}
-	// A deletion has no index blob. Numbered context comes from HEAD, which is
-	// the file that the staged delete removes.
-	if to == nil && !isBinary(fromBytes) {
-		change.Text = string(fromBytes)
-	}
-	// A NUL in the blob is the binary signal. go-git also treats an empty chunk
-	// list as binary, which would mislabel an empty text file.
-	if isBinary(fromBytes) || isBinary(toBytes) {
-		change.Binary = true
-		change.Text = ""
+	if fromBlob.oversized || toBlob.oversized {
+		change.Oversized = true
 		return change, nil
+	}
+	// A NUL in the first 8 KiB is the binary signal. go-git also treats an empty
+	// chunk list as binary, which would mislabel an empty text file.
+	if fromBlob.binary || toBlob.binary {
+		change.Binary = true
+		return change, nil
+	}
+	if to != nil {
+		change.Text = string(toBlob.body)
+	} else {
+		// A deletion has no index blob. Numbered context comes from HEAD.
+		change.Text = string(fromBlob.body)
 	}
 
 	var buf bytes.Buffer

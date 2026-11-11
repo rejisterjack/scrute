@@ -30,13 +30,15 @@ scrute --provider openai
 scrute --format markdown --out REVIEW.md
 ```
 
-`scrute init` writes a `.scrute.yaml`. `scrute hook install` adds an opt-in pre-push hook that aborts the push when scrute exits non-zero. `scrute hook uninstall` removes that hook and leaves any other hook alone. On Windows the hook is a POSIX shell script and runs under Git for Windows. It does not run in cmd.exe. The Windows zip from the release is the scrute binary the hook runs.
+`scrute init` writes a `.scrute.yaml`. `scrute hook install` adds an opt-in pre-push hook that reviews each branch update git is about to send (`base..head`, not the index). A non-zero exit aborts the push. Tag updates and branch deletes are skipped. A new branch is reviewed against the merge-base with `main` or `master` when that commit is a real ancestor, and against an empty tree otherwise. Re-run `scrute hook install` after you move the binary; the hook stores the absolute path it was given. `git push --no-verify` skips the hook. `scrute hook uninstall` removes that hook and leaves any other hook alone. On Windows the hook is a POSIX shell script and runs under Git for Windows. It does not run in cmd.exe. The Windows zip from the release is the scrute binary the hook runs.
+
+`scrute --range BASE..HEAD` reviews that commit range the same way the hook does. A three-dot range is rejected so the diff is the two trees, not a merge-base guess.
 
 ## Example
 
 ```text
 $ scrute
-scrute  anthropic/claude-sonnet-5
+scrute  anthropic/claude-sonnet-5-5
 
 Summary
   The change drops a nil check before the map lookup.
@@ -78,7 +80,9 @@ Flags `--provider`, `--model`, and `--strictness` override the file for one run.
 
 Strictness only changes the prompt. `lenient` asks for likely bugs and security mistakes. `balanced` adds correctness and API misuse. `strict` also asks for maintainability notes.
 
-Default models are `claude-sonnet-5` and `gpt-5.4`. Set `model` when you want a different id. Keys are read only from the environment and are stripped from error text.
+Default models are `claude-sonnet-5-5` and `gpt-5.4`. Set `model` when you want a different id. The Anthropic request uses JSON schema output. Current Claude models reject a forced tool call, so an older id has to support that output format.
+
+Keys are read only from the environment and are stripped from error text. `SCRUTE_ANTHROPIC_BASE_URL` and `SCRUTE_OPENAI_BASE_URL` are optional. Set one only to point that provider at a proxy you trust; the key is sent there.
 
 ## Exit codes
 
@@ -91,7 +95,7 @@ Default models are `claude-sonnet-5` and `gpt-5.4`. Set `model` when you want a 
 
 ## Limits
 
-Large diffs are split by file and reviewed in chunks. A single file bigger than `max_diff_bytes` is omitted and the command exits `2` when that was the only reason to fail, so a pre-push hook does not treat an unread file as clean. Raise the limit or review that file yourself.
+Large diffs are split by file and reviewed in chunks. A single file bigger than `max_diff_bytes` is omitted and the command exits `2` when that was the only reason to fail, so a pre-push hook does not treat an unread file as clean. Raise the limit or review that file yourself. A text blob larger than 32 MiB is omitted the same way. A binary blob larger than that is skipped after an 8 KiB sniff and is not loaded whole.
 
 ### Review quality honesty
 

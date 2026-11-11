@@ -2,6 +2,9 @@ package review
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"io"
 	"strings"
 
 	"github.com/rejisterjack/scrute/internal/gitdiff"
@@ -15,12 +18,13 @@ type Completer interface {
 // Runner reviews a staged diff, retrying once when the JSON is invalid.
 type Runner struct {
 	Model        Completer
-	ProviderName string
 	ModelName    string
 	Strictness   string
 	Patterns     []string
 	ContextLines int
 	MaxDiffBytes int
+	// Log receives progress lines when more than one request is sent. Nil stays quiet.
+	Log io.Writer
 }
 
 // Outcome is a finished review plus what was not sent.
@@ -47,9 +51,15 @@ func (r Runner) Run(ctx context.Context, files []gitdiff.FileChange) (Outcome, e
 	if len(chunks) == 0 {
 		return out, nil
 	}
-	system := SystemPrompt(r.Strictness, r.ProviderName)
+	if r.Model == nil {
+		return Outcome{}, errors.New("model client is not configured")
+	}
+	system := SystemPrompt(r.Strictness)
 	var parts []Review
-	for _, chunk := range chunks {
+	for i, chunk := range chunks {
+		if r.Log != nil && len(chunks) > 1 {
+			_, _ = fmt.Fprintf(r.Log, "scrute: reviewing %d/%d\n", i+1, len(chunks))
+		}
 		user := UserPrompt(chunk)
 		for _, section := range chunk {
 			out.Sent = append(out.Sent, section.Path)

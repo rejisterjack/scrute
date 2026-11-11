@@ -151,7 +151,6 @@ func TestRunnerRetriesInvalidJSON(t *testing.T) {
 	}}
 	out, err := (Runner{
 		Model:        model,
-		ProviderName: "openai",
 		ModelName:    "gpt-5.4",
 		Strictness:   "balanced",
 		MaxDiffBytes: 1000,
@@ -173,7 +172,6 @@ func TestRunnerSecondParseIsUnparsed(t *testing.T) {
 	model := &scripted{raw: []string{"not json", "still not json"}}
 	_, err := (Runner{
 		Model:        model,
-		ProviderName: "openai",
 		ModelName:    "gpt-5.4",
 		Strictness:   "balanced",
 		MaxDiffBytes: 1000,

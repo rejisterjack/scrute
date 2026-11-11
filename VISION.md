@@ -18,7 +18,8 @@ Many AI code review tools are subscription-based and run after you push, when fi
 - Calls Claude or GPT using your API key from the environment
 - Returns a structured review: summary, issues with severity (critical, warning, suggestion), and line references
 - Configurable via `.scrute.yaml`: model, excluded paths, review strictness
-- Output to the terminal or a markdown file for PR attachment
+- Output to the terminal, JSON, or a markdown file for PR attachment
+- Opt-in pre-push hook reviews the branch commits being sent, not the empty index left after commit
 
 ## Who it's for
 
