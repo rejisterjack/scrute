@@ -9,7 +9,7 @@ import (
 const (
 	Anthropic             = "anthropic"
 	OpenAI                = "openai"
-	DefaultAnthropicModel = "claude-sonnet-5"
+	DefaultAnthropicModel = "claude-sonnet-5-5"
 	DefaultOpenAIModel    = "gpt-5.4"
 )
 

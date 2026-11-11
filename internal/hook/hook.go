@@ -46,14 +46,31 @@ func Install(root, executable string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
+	// Git passes ref updates on stdin. Review each branch tip that will change.
+	// Tags and deletes are not code pushes. An all-zero local sha is a delete
+	// for both SHA-1 and SHA-256 repositories.
 	script := fmt.Sprintf(`#!/bin/sh
 %s
-%s
-status=$?
-if [ "$status" -ne 0 ]; then
-  echo "scrute: push aborted (exit $status)" >&2
-  exit "$status"
+scrute_bin=%s
+if [ -t 0 ]; then
+  exec "$scrute_bin"
 fi
+while read -r local_ref local_sha remote_ref remote_sha; do
+  case "$local_ref" in
+    refs/heads/*) ;;
+    *) continue ;;
+  esac
+  case "$local_sha" in
+    *[!0]*) ;;
+    *) continue ;;
+  esac
+  status=0
+  "$scrute_bin" --range "$remote_sha..$local_sha" || status=$?
+  if [ "$status" -ne 0 ]; then
+    echo "scrute: push aborted (exit $status)" >&2
+    exit "$status"
+  fi
+done
 exit 0
 `, marker, shellQuote(executable))
 	return os.WriteFile(path, []byte(script), 0o755)

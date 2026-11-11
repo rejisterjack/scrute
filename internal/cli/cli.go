@@ -89,6 +89,7 @@ func newRoot(stdout, stderr io.Writer) *cobra.Command {
 		format       string
 		outPath      string
 		verbose      bool
+		commitRange  string
 	)
 	cmd := &cobra.Command{
 		Use:           "scrute",
@@ -101,7 +102,7 @@ func newRoot(stdout, stderr io.Writer) *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runReview(cmd.Context(), stdout, stderr, reviewFlags{
 				provider: providerName, model: model, strictness: strictness,
-				format: format, out: outPath, verbose: verbose,
+				format: format, out: outPath, verbose: verbose, commitRange: commitRange,
 			})
 		},
 	}
@@ -114,23 +115,34 @@ func newRoot(stdout, stderr io.Writer) *cobra.Command {
 	flags.StringVar(&format, "format", "", "output format: term, markdown, or json")
 	flags.StringVar(&outPath, "out", "", "write the review to this file")
 	flags.BoolVar(&verbose, "verbose", false, "print files sent and token counts on stderr")
+	flags.StringVar(&commitRange, "range", "", "review BASE..HEAD instead of the index (used by the pre-push hook)")
 
 	cmd.AddCommand(newInit(stdout), newVersion(stdout), newHook(stdout))
 	return cmd
 }
 
 type reviewFlags struct {
-	provider   string
-	model      string
-	strictness string
-	format     string
-	out        string
-	verbose    bool
+	provider    string
+	model       string
+	strictness  string
+	format      string
+	out         string
+	verbose     bool
+	commitRange string
 }
 
 func runReview(ctx context.Context, stdout, stderr io.Writer, flags reviewFlags) error {
 	if !validFormat(flags.format) {
 		return fail(exitUsage, fmt.Errorf("format must be term, markdown, or json, got %q", flags.format))
+	}
+	var baseRev, headRev string
+	ranged := strings.TrimSpace(flags.commitRange) != ""
+	if ranged {
+		var err error
+		baseRev, headRev, err = parseRange(flags.commitRange)
+		if err != nil {
+			return fail(exitUsage, err)
+		}
 	}
 	wd, err := os.Getwd()
 	if err != nil {
@@ -155,13 +167,22 @@ func runReview(ctx context.Context, stdout, stderr io.Writer, flags reviewFlags)
 		ctx = context.Background()
 	}
 	readCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	_, files, err := gitdiff.ReadStaged(readCtx, root)
+	var files []gitdiff.FileChange
+	if ranged {
+		_, files, err = gitdiff.ReadRange(readCtx, root, baseRev, headRev)
+	} else {
+		_, files, err = gitdiff.ReadStaged(readCtx, root)
+	}
 	cancel()
 	if err != nil {
 		return fail(exitUsage, err)
 	}
 	if len(files) == 0 {
-		say(stdout, "Nothing staged.\n")
+		if ranged {
+			say(stdout, "Nothing to review.\n")
+		} else {
+			say(stdout, "Nothing staged.\n")
+		}
 		return nil
 	}
 
@@ -174,20 +195,28 @@ func runReview(ctx context.Context, stdout, stderr io.Writer, flags reviewFlags)
 		}
 		switch cfg.Provider {
 		case provider.OpenAI:
-			model = openai.New(key)
+			var opts []openai.Option
+			if base := strings.TrimSpace(os.Getenv("SCRUTE_OPENAI_BASE_URL")); base != "" {
+				opts = append(opts, openai.WithBaseURL(base))
+			}
+			model = openai.New(key, opts...)
 		default:
-			model = anthropic.New(key)
+			var opts []anthropic.Option
+			if base := strings.TrimSpace(os.Getenv("SCRUTE_ANTHROPIC_BASE_URL")); base != "" {
+				opts = append(opts, anthropic.WithBaseURL(base))
+			}
+			model = anthropic.New(key, opts...)
 		}
 	}
 
 	outcome, err := (review.Runner{
 		Model:        model,
-		ProviderName: cfg.Provider,
 		ModelName:    cfg.Model,
 		Strictness:   cfg.Strictness,
 		Patterns:     cfg.Exclude,
 		ContextLines: cfg.ContextLines,
 		MaxDiffBytes: cfg.MaxDiffBytes,
+		Log:          stderr,
 	}).Run(ctx, files)
 	if err != nil {
 		return fail(exitProvider, err)
@@ -249,6 +278,18 @@ func reviewExit(out review.Outcome, failOn string) int {
 	default:
 		return exitOK
 	}
+}
+
+func parseRange(spec string) (base, head string, err error) {
+	spec = strings.TrimSpace(spec)
+	if strings.Contains(spec, "...") {
+		return "", "", fmt.Errorf("--range must be <base>..<head>")
+	}
+	base, head, ok := strings.Cut(spec, "..")
+	if !ok || strings.TrimSpace(head) == "" || strings.Contains(head, "..") {
+		return "", "", fmt.Errorf("--range must be <base>..<head>")
+	}
+	return strings.TrimSpace(base), strings.TrimSpace(head), nil
 }
 
 func validFormat(format string) bool {
@@ -339,7 +380,7 @@ func newHook(stdout io.Writer) *cobra.Command {
 	cmd.AddCommand(
 		&cobra.Command{
 			Use:           "install",
-			Short:         "Abort git push when scrute finds issues",
+			Short:         "Abort git push when the branch update fails review",
 			SilenceUsage:  true,
 			SilenceErrors: true,
 			Args:          cobra.NoArgs,
@@ -351,7 +392,7 @@ func newHook(stdout io.Writer) *cobra.Command {
 				if err := hook.Install(root, ""); err != nil {
 					return fail(exitUsage, err)
 				}
-				say(stdout, "Installed pre-push hook. A non-zero scrute exit aborts the push.\n")
+				say(stdout, "Installed pre-push hook. Branch updates are reviewed before they are sent.\n")
 				return nil
 			},
 		},

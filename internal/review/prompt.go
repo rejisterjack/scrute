@@ -8,7 +8,7 @@ import (
 )
 
 // SystemPrompt is the instruction block for one review request.
-func SystemPrompt(strictness, providerName string) string {
+func SystemPrompt(strictness string) string {
 	var focus string
 	switch strictness {
 	case "lenient":
@@ -18,11 +18,8 @@ func SystemPrompt(strictness, providerName string) string {
 	default:
 		focus = "Report critical issues and warnings about correctness and API misuse. Skip style."
 	}
-	closing := "Respond with the review JSON object and nothing else."
-	if providerName == "anthropic" {
-		closing = "Submit the review by calling the submit_review tool exactly once."
-	}
-	return strings.TrimSpace(fmt.Sprintf(`You are Scrute, a pre-push code reviewer. Review only the staged diff you are given. Report issues that are justified by that diff. Do not invent files or line numbers. Do not restate the diff. Line numbers refer to the new file. Use line 0 only when the issue applies to the whole file.
+	closing := "Respond with one review JSON object and nothing else."
+	return strings.TrimSpace(fmt.Sprintf(`You are Scrute, a pre-push code reviewer. Review only the diff you are given. Report issues that are justified by that diff. Do not invent files or line numbers. Do not restate the diff. Line numbers refer to the new file. Use line 0 only when the issue applies to the whole file.
 
 Each issue has severity, file, line, title, and detail.
 Severity:
@@ -41,7 +38,7 @@ If nothing is worth reporting, return an empty issues list and a one-sentence su
 // UserPrompt concatenates file sections for one request.
 func UserPrompt(sections []Section) string {
 	var b strings.Builder
-	b.WriteString("Review these staged changes.\n")
+	b.WriteString("Review these changes.\n")
 	for _, section := range sections {
 		b.WriteByte('\n')
 		b.WriteString(section.Body)

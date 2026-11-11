@@ -23,13 +23,11 @@ func TestCompleteParsesToolUse(t *testing.T) {
 		  "id": "msg_test",
 		  "type": "message",
 		  "role": "assistant",
-		  "model": "claude-sonnet-5",
-		  "stop_reason": "tool_use",
+		  "model": "claude-sonnet-5-5",
+		  "stop_reason": "end_turn",
 		  "content": [{
-		    "type": "tool_use",
-		    "id": "toolu_test",
-		    "name": "submit_review",
-		    "input": {"summary":"Found a bug.","issues":[{"severity":"critical","file":"a.go","line":3,"title":"nil deref","detail":"x is nil"}]}
+		    "type": "text",
+		    "text": "{\"summary\":\"Found a bug.\",\"issues\":[{\"severity\":\"critical\",\"file\":\"a.go\",\"line\":3,\"title\":\"nil deref\",\"detail\":\"x is nil\"}]}"
 		  }],
 		  "usage": {"input_tokens": 11, "output_tokens": 7, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
 		}`)
@@ -37,7 +35,7 @@ func TestCompleteParsesToolUse(t *testing.T) {
 	defer server.Close()
 
 	raw, inTok, outTok, err := New(key, WithBaseURL(server.URL), WithMaxRetries(0)).Complete(
-		context.Background(), "claude-sonnet-5", "system", "review a.go please",
+		context.Background(), "claude-sonnet-5-5", "system", "review a.go please",
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -48,8 +46,11 @@ func TestCompleteParsesToolUse(t *testing.T) {
 	if inTok != 11 || outTok != 7 {
 		t.Fatalf("tokens %d %d", inTok, outTok)
 	}
-	if !strings.Contains(body, "submit_review") || !strings.Contains(body, "review a.go please") || !strings.Contains(body, "claude-sonnet-5") {
+	if !strings.Contains(body, "json_schema") || !strings.Contains(body, "review a.go please") || !strings.Contains(body, "claude-sonnet-5-5") {
 		t.Fatalf("request body missing review contract:\n%s", body)
+	}
+	if strings.Contains(body, "submit_review") || strings.Contains(body, `"type":"tool"`) {
+		t.Fatalf("request forced a tool call, which current Claude models reject:\n%s", body)
 	}
 	if strings.Contains(body, key) {
 		t.Fatal("API key was copied into the request body")
@@ -66,7 +67,7 @@ func TestCompleteRedactsKey(t *testing.T) {
 	defer server.Close()
 
 	_, _, _, err := New(key, WithBaseURL(server.URL), WithMaxRetries(0)).Complete(
-		context.Background(), "claude-sonnet-5", "system", "user",
+		context.Background(), "claude-sonnet-5-5", "system", "user",
 	)
 	if err == nil {
 		t.Fatal("expected error")

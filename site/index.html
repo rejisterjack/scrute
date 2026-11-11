@@ -6,6 +6,7 @@
   <title>Scrute — review the diff before you push</title>
   <meta name="description" content="A local CLI that reviews your staged git diff with your own Claude or GPT key. Source stays on your machine.">
   <link rel="canonical" href="https://scrute.rejisterjack.com/">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <style>
     :root {
       color-scheme: light;
@@ -126,12 +127,12 @@
     <ol>
       <li><b>01</b><span>Export <code>ANTHROPIC_API_KEY</code> or <code>OPENAI_API_KEY</code>.</span></li>
       <li><b>02</b><span>Stage with <code>git add</code>, then run <code>scrute</code>.</span></li>
-      <li><b>03</b><span>Fix what matters. Push when the review is quiet.</span></li>
+      <li><b>03</b><span>Fix what matters. <code>scrute hook install</code> reviews branch pushes the same way.</span></li>
     </ol>
     <section class="panel" aria-label="Example review">
       <header>
         <span>scrute</span>
-        <span>anthropic / claude-sonnet-5</span>
+        <span>anthropic / claude-sonnet-5-5</span>
       </header>
       <pre><span class="del">- if m == nil {</span>
 <span class="del">-     return errMissing</span>

@@ -22,6 +22,10 @@ func Pack(files []gitdiff.FileChange, patterns []string, contextLines, maxBytes 
 			submodules = append(submodules, file.Path)
 			continue
 		}
+		if file.Oversized {
+			omitted = append(omitted, file.Path)
+			continue
+		}
 		if file.Binary {
 			binaries = append(binaries, file.Path)
 			continue

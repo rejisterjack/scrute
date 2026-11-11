@@ -285,6 +285,157 @@ func TestReadStagedConflict(t *testing.T) {
 	}
 }
 
+func TestReadRangeMatchesCommitDiff(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	dir := t.TempDir()
+	runGit(t, dir, "init", "-b", "main")
+	runGit(t, dir, "config", "user.email", "scrute@example.com")
+	runGit(t, dir, "config", "user.name", "Scrute")
+	runGit(t, dir, "config", "core.autocrlf", "false")
+	mustWrite(t, filepath.Join(dir, "README"), "root\n")
+	runGit(t, dir, "add", "README")
+	runGit(t, dir, "commit", "-m", "base")
+	mustWrite(t, filepath.Join(dir, "lib.go"), "package lib\n\nfunc ID() string { return \"select \" + \"x\" }\n")
+	runGit(t, dir, "add", "lib.go")
+	runGit(t, dir, "commit", "-m", "lib")
+
+	_, files, err := ReadRange(context.Background(), dir, "HEAD~1", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotAdd, gotDel := changedLines(joinPatches(files))
+	want := runGit(t, dir, "diff", "HEAD~1", "HEAD", "--no-ext-diff", "--unified=3", "-M")
+	wantAdd, wantDel := changedLines(want)
+	if strings.Join(gotAdd, "\n") != strings.Join(wantAdd, "\n") || strings.Join(gotDel, "\n") != strings.Join(wantDel, "\n") {
+		t.Fatalf("range parity\nadded got:\n%s\nadded want:\n%s", strings.Join(gotAdd, "\n"), strings.Join(wantAdd, "\n"))
+	}
+	if _, _, err := ReadRange(context.Background(), dir, strings.Repeat("a", 40), "HEAD"); err == nil {
+		t.Fatal("expected an unknown base revision to fail")
+	}
+}
+
+func TestReadRangeNewBranchUsesMergeBase(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	dir := t.TempDir()
+	runGit(t, dir, "init", "-b", "main")
+	runGit(t, dir, "config", "user.email", "scrute@example.com")
+	runGit(t, dir, "config", "user.name", "Scrute")
+	mustWrite(t, filepath.Join(dir, "README"), "root\n")
+	runGit(t, dir, "add", "README")
+	runGit(t, dir, "commit", "-m", "base")
+	runGit(t, dir, "checkout", "-b", "feature")
+	mustWrite(t, filepath.Join(dir, "feature.go"), "package feature\n")
+	runGit(t, dir, "add", "feature.go")
+	runGit(t, dir, "commit", "-m", "feature")
+
+	_, files, err := ReadRange(context.Background(), dir, strings.Repeat("0", 40), "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || files[0].Path != "feature.go" {
+		t.Fatalf("files %#v", files)
+	}
+}
+
+func TestOversizedTextAndBinary(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	prev := maxBlobBytes
+	maxBlobBytes = 24
+	t.Cleanup(func() { maxBlobBytes = prev })
+
+	dir := t.TempDir()
+	runGit(t, dir, "init", "-b", "main")
+	runGit(t, dir, "config", "user.email", "scrute@example.com")
+	runGit(t, dir, "config", "user.name", "Scrute")
+	mustWrite(t, filepath.Join(dir, "note.txt"), strings.Repeat("abcdefghij", 4))
+	mustWrite(t, filepath.Join(dir, "pic.bin"), "ok\x00"+strings.Repeat("z", 40))
+	runGit(t, dir, "add", ".")
+
+	_, files, err := ReadStaged(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]FileChange{}
+	for _, file := range files {
+		got[file.Path] = file
+	}
+	note := got["note.txt"]
+	if !note.Oversized || note.Text != "" || note.Patch != "" || note.Binary {
+		t.Fatalf("note %#v", note)
+	}
+	pic := got["pic.bin"]
+	if !pic.Binary || pic.Oversized || pic.Text != "" || pic.Patch != "" {
+		t.Fatalf("pic %#v", pic)
+	}
+}
+
+func TestLinkedWorktree(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	dir := t.TempDir()
+	runGit(t, dir, "init", "-b", "main")
+	runGit(t, dir, "config", "user.email", "scrute@example.com")
+	runGit(t, dir, "config", "user.name", "Scrute")
+	mustWrite(t, filepath.Join(dir, "note.txt"), "alpha\n")
+	runGit(t, dir, "add", "note.txt")
+	runGit(t, dir, "commit", "-m", "base")
+
+	linked := filepath.Join(t.TempDir(), "linked")
+	runGit(t, dir, "worktree", "add", "--detach", linked, "HEAD")
+	info, err := os.Stat(filepath.Join(linked, ".git"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.IsDir() {
+		t.Fatal("linked work tree .git should be a file")
+	}
+	gitDir, err := GitDir(linked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(gitDir, "HEAD")); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(linked, "note.txt"), "alpha\nbeta\n")
+	runGit(t, linked, "add", "note.txt")
+	_, files, err := ReadStaged(context.Background(), linked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || files[0].Path != "note.txt" || !strings.Contains(files[0].Patch, "beta") {
+		t.Fatalf("files %#v", files)
+	}
+}
+
+func TestRenameOfExcludedPath(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	dir := t.TempDir()
+	runGit(t, dir, "init", "-b", "main")
+	runGit(t, dir, "config", "user.email", "scrute@example.com")
+	runGit(t, dir, "config", "user.name", "Scrute")
+	mustWrite(t, filepath.Join(dir, ".env"), "TOKEN=1\n")
+	runGit(t, dir, "add", "-f", ".env")
+	runGit(t, dir, "commit", "-m", "secret")
+	runGit(t, dir, "mv", "-f", ".env", "notes.txt")
+
+	_, files, err := ReadStaged(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || files[0].Status != Renamed || files[0].OldPath != ".env" || files[0].Path != "notes.txt" {
+		t.Fatalf("files %#v", files)
+	}
+}
+
 func TestSubmoduleIsSkipped(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git is not installed")

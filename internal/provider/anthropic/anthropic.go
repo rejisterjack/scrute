@@ -3,7 +3,6 @@ package anthropic
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -14,8 +13,6 @@ import (
 	"github.com/rejisterjack/scrute/internal/provider"
 	"github.com/rejisterjack/scrute/internal/review"
 )
-
-const toolName = "submit_review"
 
 // Client calls the Anthropic Messages API.
 type Client struct {
@@ -52,7 +49,9 @@ func New(apiKey string, opts ...Option) *Client {
 	return c
 }
 
-// Complete forces the submit_review tool and returns its JSON input.
+// Complete requests a JSON schema review. Current Claude models reject a forced
+// tool_choice, so the schema travels in output_config.format and the review is
+// the text block of the response.
 func (c *Client) Complete(ctx context.Context, model, system, user string) (raw string, inputTokens, outputTokens int, err error) {
 	if strings.TrimSpace(c.apiKey) == "" {
 		return "", 0, 0, errors.New("API key is empty")
@@ -63,32 +62,16 @@ func (c *Client) Complete(ctx context.Context, model, system, user string) (raw 
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
 	sdk := anthropic.NewClient(c.options()...)
-	schema := review.Schema()
-	props, _ := schema["properties"].(map[string]any)
-	required, _ := schema["required"].([]string)
 	message, err := sdk.Messages.New(ctx, anthropic.MessageNewParams{
 		Model:     anthropic.Model(model),
-		MaxTokens: 8192,
+		MaxTokens: 16000,
 		System:    []anthropic.TextBlockParam{{Text: system}},
 		Messages: []anthropic.MessageParam{
 			anthropic.NewUserMessage(anthropic.NewTextBlock(user)),
 		},
-		Tools: []anthropic.ToolUnionParam{{
-			OfTool: &anthropic.ToolParam{
-				Name:        toolName,
-				Description: anthropic.String("Submit the structured code review."),
-				InputSchema: anthropic.ToolInputSchemaParam{
-					Properties: props,
-					Required:   required,
-					ExtraFields: map[string]any{
-						"additionalProperties": false,
-					},
-				},
-				Strict: anthropic.Bool(true),
-				Type:   anthropic.ToolTypeCustom,
-			},
-		}},
-		ToolChoice: anthropic.ToolChoiceParamOfTool(toolName),
+		OutputConfig: anthropic.OutputConfigParam{
+			Format: anthropic.JSONOutputFormatParam{Schema: review.Schema()},
+		},
 	})
 	if err != nil {
 		return "", 0, 0, provider.Redact(err, c.apiKey)
@@ -119,24 +102,9 @@ func reviewJSON(message *anthropic.Message) (string, error) {
 		return "", errors.New("empty model response")
 	}
 	for _, block := range message.Content {
-		if block.Type != "tool_use" {
-			continue
-		}
-		if block.Name != "" && block.Name != toolName {
-			continue
-		}
-		if len(bytesTrim(block.Input)) > 0 {
-			return string(block.Input), nil
-		}
-	}
-	for _, block := range message.Content {
 		if block.Type == "text" && strings.TrimSpace(block.Text) != "" {
 			return block.Text, nil
 		}
 	}
 	return "", errors.New("model response did not include a review")
-}
-
-func bytesTrim(raw json.RawMessage) json.RawMessage {
-	return json.RawMessage(strings.TrimSpace(string(raw)))
 }
