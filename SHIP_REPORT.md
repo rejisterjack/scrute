@@ -51,7 +51,7 @@ Review quality is the model's opinion; Scrute is not a human reviewer or a secur
 | WEB-02 | Title, description, icon, robots | P1 | PASSED | 0 | 0 | 0 | Canonical URL is https://scrute.rejisterjack.com/. `robots.txt` allows `/`. |
 | WEB-03 | Responsive page | P2 | PASSED | 0 | 0 | 0 | The layout tightens below 560px. The only theme is light. |
 | WEB-04 | Security headers | P1 | PASSED | 0 | 0 | 0 | site/vercel.json sends nosniff, a strict referrer policy, DENY framing, and a CSP that allows the inline stylesheet. |
-| DEVOPS-01 | CI | P0 | PASSED | 0 | 0 | 0 | Push to `dev` or `main`, and pull requests, run race tests, golangci-lint, and govulncheck. |
+| DEVOPS-01 | CI | P0 | PASSED | 0 | 0 | 0 | A push to `main` runs race tests, golangci-lint, and govulncheck. No other branch or pull request does. |
 | DEVOPS-02 | Release binaries | P0 | PASSED | 0 | 0 | 0 | A `v*` tag on `main` publishes six targets plus checksums. |
 | DEVOPS-03 | Go 1.27.4 | P1 | PASSED | 0 | 0 | 0 | `go.mod` says `go 1.27.4`. CI uses that file. |
 | TEST-01 | Race suite | P0 | PASSED | 0 | 0 | 0 | `go test -race ./...` is the documented check. This step did not run it. |
@@ -793,7 +793,7 @@ Review quality is the model's opinion; Scrute is not a human reviewer or a secur
 ## DEVOPS-01 CI
 
 - **Files:** `.github/workflows/ci.yml`
-- **Expected behavior:** Pushes to `dev` and `main`, and pull requests, run `go test -race ./...`, golangci-lint v2.15.0, and `govulncheck` at v1.9.0. Setup uses `go-version-file: go.mod`. Permissions are contents read.
+- **Expected behavior:** A push to `main` runs `go test -race ./...`, golangci-lint v2.15.0, and `govulncheck` at v1.9.0. Setup uses `go-version-file: go.mod`. Permissions are contents read.
 - **Acceptance checklist:**
   - [x] The workflow file matches that description.
   - [x] Step 2 runs the same test command locally. It does not have to wait on GitHub unless a run is already available to read.
@@ -811,7 +811,7 @@ Review quality is the model's opinion; Scrute is not a human reviewer or a secur
 ## DEVOPS-02 Release binaries
 
 - **Files:** `.github/workflows/release.yml`, `.goreleaser.yaml`
-- **Expected behavior:** A tag matching `v*` checks out full history, requires the tagged commit to be an ancestor of `origin/main`, runs the race tests, and runs GoReleaser. Targets are linux, darwin, and windows for amd64 and arm64. Archives are tar.gz, zip on Windows, and include LICENSE and README. `checksums.txt` is published. The version ldflag sets `internal/buildinfo.Version`. A tag that is not on main fails the ancestor check.
+- **Expected behavior:** A push to `main` whose subject starts with `release: v` checks out full history, tags that commit, runs the race tests, and runs GoReleaser. Targets are linux, darwin, and windows for amd64 and arm64. Archives are tar.gz, zip on Windows, and include LICENSE and README. `checksums.txt` is published. The version ldflag sets `internal/buildinfo.Version`. Any other push, branch, or tag does not start the workflow.
 - **Acceptance checklist:**
   - [x] The workflow refuses a tag that is not contained in main.
   - [x] The goreleaser file lists six OS and arch pairs.

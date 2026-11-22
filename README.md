@@ -107,7 +107,7 @@ Review quality depends on the model, the prompt, and how much context fits in th
 go test -race ./...
 ```
 
-GitHub Actions runs the race tests, `golangci-lint`, and `govulncheck` on `dev` and `main`. Provider tests use a local HTTP server. Tagging `v*` is what publishes a release. The tagged commit must already be on `main`.
+GitHub Actions runs the race tests, `golangci-lint`, and `govulncheck` only on a push to `main`. A pull request, `dev`, any other branch, a tag push, a schedule, and a manual run do not start CI or CD. Provider tests use a local HTTP server. A production publish runs on that same push when the commit subject starts with `release: v` and a version (`release: v1.2.3`). Any other push to `main` runs checks only. The Vercel site builds only for `main`, and that build is production.
 
 ## License
 
